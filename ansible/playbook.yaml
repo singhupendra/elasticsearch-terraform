@@ -1,0 +1,68 @@
+---
+    - name: install ntp
+      hosts: all 
+      become: yes
+      become_user: root
+      tasks:
+        - name: install ntp
+          yum:
+            name: ntp
+            state: latest
+        - name: Start service ntpd, if not started
+          systemd:
+            name: ntpd
+            state: started
+        - name: Set timezone to IST
+          timezone:
+            name: Asia/Kolkata
+        - name: install jdk
+          yum: 
+            name: java-1.8.0-openjdk
+            state: present
+        - name: Add elactic repo 
+          yum_repository:
+            name: elastic
+            description: elastic YUM repo
+            baseurl: https://artifacts.elastic.co/packages/7.x/yum
+        - name: Add gpg key
+          rpm_key:
+            state: present
+            key: https://artifacts.elastic.co/GPG-KEY-elasticsearch
+        - name: Install elasticsearch
+          yum: 
+            name: elasticsearch
+            state: present         
+        - name: Generate cert for secure communication
+          shell: |
+            echo {{ ansible_all_ipv4_addresses | ipaddr('private') | first }}
+            /usr/share/elasticsearch/bin/elasticsearch-certutil cert ca --silent --pem --ip {{ ansible_all_ipv4_addresses | ipaddr('private') | first }} --dns  $(hostname) --out /tmp/certs.zip
+            mkdir /etc/elasticsearch/certs
+            unzip /tmp/certs.zip -d /etc/elasticsearch/certs            
+        - name: Enable encryption
+          blockinfile:
+            path: /etc/elasticsearch/elasticsearch.yml
+            block: |
+              cluster.name: prod
+              network.host: {{ ansible_all_ipv4_addresses | ipaddr('private') | first }}
+              node.name: node-1
+              cluster.initial_master_nodes: ["node-1"]
+              xpack.security.enabled: true
+              xpack.security.http.ssl.enabled: true
+              xpack.security.transport.ssl.enabled: true
+              xpack.security.http.ssl.key: certs/instance/instance.key
+              xpack.security.http.ssl.certificate: certs/instance/instance.crt
+              xpack.security.http.ssl.certificate_authorities: certs/ca/ca.crt
+              xpack.security.transport.ssl.key: certs/instance/instance.key
+              xpack.security.transport.ssl.certificate: certs/instance/instance.crt
+              xpack.security.transport.ssl.certificate_authorities: certs/ca/ca.crt
+        - name: Start elasticsearch service
+          systemd:
+            name: elasticsearch
+            state: restarted
+        - name: Generate password for built-in users
+          shell: |
+             yes | /usr/share/elasticsearch/bin/elasticsearch-setup-passwords auto
+          register: password
+        - debug: msg="{{ password.stdout }}"
+        - debug: msg="{{ password.stderr }}"
+            
